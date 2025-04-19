@@ -1,0 +1,103 @@
+<!DOCTYPE html> 
+<html> 
+  <head> 
+    <meta charset="utf-8"> 
+    <meta name="viewport" content="width=device-width, initial-scale=1"> 
+    <title>i-FUSE</title> 
+ 
+    <!-- update the version number as needed --> 
+    <script src="https://www.gstatic.com/firebasejs/8.8.1/firebase-app.js"></script> 
+ 
+    <!-- include only the Firebase features as you need --> 
+    <script src="https://www.gstatic.com/firebasejs/8.8.1/firebase-auth.js"></script> 
+    <script src="https://www.gstatic.com/firebasejs/8.8.1/firebase-database.js"></script> 
+ 
+    <script> 
+     // REPLACE WITH YOUR web app's Firebase configuration 
+      const firebaseConfig = { 
+        apiKey: "REPLACE_WITH_YOUR_Firebase_CONFIGURATION", 
+        authDomain: "REPLACE_WITH_YOUR_Firebase_CONFIGURATION", 
+        databaseURL: "REPLACE_WITH_YOUR_Firebase_CONFIGURATION", 
+        projectId: "REPLACE_WITH_YOUR_Firebase_CONFIGURATION", 
+        storageBucket: "REPLACE_WITH_YOUR_Firebase_CONFIGURATION", 
+        messagingSenderId: "REPLACE_WITH_YOUR_Firebase_CONFIGURATION", 
+        appId: "REPLACE_WITH_YOUR_Firebase_CONFIGURATION" 
+      }; 
+ 
+      // Initialize firebase 
+      firebase.initializeApp(firebaseConfig); 
+ 
+      // Make auth and database references 
+      const auth = firebase.auth(); 
+      const db = firebase.database(); 
+ 
+    </script> 
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" 
+integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" 
+crossorigin="anonymous"> 
+    <link rel="icon" type="image/png" href="favicon.png"> 
+    <link rel="stylesheet" type="text/css" href="style.css"> 
+</head> 
+ 
+<body> 
+  <!--TOP BAR--> 
+  <div class="topnav"> 
+    <h1>i-FUSE Readings <i class="fas fa-car"></i></h1> 
+  </div> 
+ 
+  <!--AUTHENTICATION BAR (USER DETAILS/LOGOUT BUTTON)--> 
+  <div id="authentication-bar" style="display: none;"> 
+    <p><span id="authentication-status">User logged in</span> 
+       <span id="user-details">USEREMAIL</span> 
+       <a href="/" id="logout-link">(logout)</a> 
+    </p> 
+  </div> 
+ 
+  <!--LOGIN FORM--> 
+  <form id="login-form" style="display: none;"> 
+    <div class="form-elements-container"> 
+      <label for="input-email"><b>Email</b></label> 
+      <input type="text" placeholder="Enter Username" id="input-email" required> 
+ 
+      <label for="input-password"><b>Password</b></label> 
+      <input type="password" placeholder="Enter Password" id="input-password" required> 
+ 
+      <button type="submit" id="login-button">Login</button> 
+      <p id="error-message" style="color:red;"></p> 
+    </div> 
+  </form> 
+ 
+  <!--CONTENT (SENSOR READINGS)--> 
+  <div class="content-sign-in" id="content-sign-in" style="display: none;"> 
+    <div class="cards"> 
+      <div class="card"> 
+        <p><i class="fas fa-mountain" style="color:#059e8a;"></i> ELEVATION</p> 
+        <p><span class="reading"><span id="elevation"></span> m/s²</span></p> 
+      </div> 
+      <div class="card"> 
+        <p><i class="fas fa-gas-pump" style="color:#00add6;"></i> FUEL USED</p> 
+        <p><span class="reading"><span id="fuelUsed"></span> units</span></p> 
+      </div> 
+      <div class="card"> 
+        <p><i class="fas fa-smog" style="color:#e1e437;"></i> MONOXIDE LEVELS</p> 
+        <p><span class="reading"><span id="monoxide"></span> ppm</span></p> 
+      </div>
+      <div class="card"> 
+        <p><i class="fas fa-wave-square" style="color:#e14237;"></i> VIBRATION</p> 
+        <p><span class="reading"><span id="vibration"></span> units</span></p> 
+      </div>
+      <div class="card special-card"> 
+        <p><i class="fas fa-tachometer-alt" style="color:#37e142;"></i> FUEL SAVE PRIORITY</p> 
+        <div class="gauge-container">
+          <div class="gauge" id="fuzzyGauge">
+            <div class="gauge-arrow" id="fuzzyArrow"></div>
+          </div>
+          <p><span class="reading"><span id="fuzzyOutput"></span></span></p>
+        </div>
+      </div>
+    </div> 
+  </div> 
+    <script src="scripts/auth.js"></script> 
+    <script src="scripts/index.js"></script> 
+  </body> 
+</html>
