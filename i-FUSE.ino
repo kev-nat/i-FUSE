@@ -42,14 +42,14 @@ String uid;
 
 // Variables to save database paths
 String databasePath;
-String elevationPath;
+String inclinationPath;  // Changed from elevation to inclination
 String fuelUsedPath;
 String monoxidePath;
 String vibrationPath;
 String fuzzyOutputPath;
 
 // Sensor reading and calculated values
-float elevation = 0.0;          // from MPU6050 y-axis
+float inclination = 0.0;        // from MPU6050 sensor fusion
 float monoxideLevel = 0.0;      // from CO sensor
 float vibrationLevel = 0.0;     // from vibration sensor
 float fuelUsed = 0.0;           // calculated based on other inputs
@@ -64,19 +64,34 @@ unsigned long lastUpdateTime = 0;
 float totalFuelUsed = 0.0;
 const float BASE_FUEL_RATE = 0.05; // Base fuel consumption rate per second
 
+// Sensor fusion variables
+unsigned long lastSensorReadTime = 0;
+float complementaryFilterAlpha = 0.98;
+float currentPitchAngle = 0.0;
+
+// Vibration measurement variables
+unsigned long lastVibrationTime = 0;
+volatile unsigned int vibrationCount = 0;
+unsigned long vibrationMeasurementPeriod = 1000; // 1 second
+
 // Fuzzy logic membership functions
 // Input ranges
-const float ELEVATION_LOW = -5.0;
-const float ELEVATION_HIGH = 5.0;
+const float INCLINATION_LOW = -10.0;      // Degrees
+const float INCLINATION_HIGH = 10.0;      // Degrees
 const float CO_LOW = 0.0;
-const float CO_HIGH = 4095.0;
+const float CO_HIGH = 4095.0;             // ADC max value
 const float VIBRATION_LOW = 0.0;  
-const float VIBRATION_HIGH = 10000.0;
+const float VIBRATION_HIGH = 100.0;       // Count per second
 
 // Output ranges for servo
 const int SERVO_LOW = 0;    // Low priority (minimum fuel saving)
 const int SERVO_MED = 90;   // Medium priority
 const int SERVO_HIGH = 180; // High priority (maximum fuel saving)
+
+// Vibration sensor interrupt handler
+void IRAM_ATTR vibrationISR() {
+  vibrationCount++;
+}
 
 // Initialize WiFi
 void initWiFi() {
@@ -99,6 +114,8 @@ bool initMPU() {
   }
   Serial.println("MPU6050 Found!");
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
   return true;
 }
 
@@ -115,11 +132,36 @@ void sendFloat(String path, float value) {
   }
 }
 
-// Read vibration sensor
+// Check WiFi connection and reconnect if needed
+void checkWiFiConnection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected, reconnecting...");
+    WiFi.reconnect();
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("WiFi reconnected");
+    }
+  }
+}
+
+// Read vibration using interrupt-based approach
 float readVibration() {
-  long measurement = pulseIn(VIBRATION_SENSOR_PIN, HIGH);
-  if (measurement > VIBRATION_HIGH) measurement = VIBRATION_HIGH;
-  return measurement;
+  // Calculate vibrations per second
+  unsigned long currentTime = millis();
+  if (currentTime - lastVibrationTime >= vibrationMeasurementPeriod) {
+    float vibrationsPerSecond = (float)vibrationCount * (1000.0 / (currentTime - lastVibrationTime));
+    vibrationCount = 0;  // Reset counter
+    lastVibrationTime = currentTime;
+    return vibrationsPerSecond;
+  }
+  
+  // Return last value if measurement period hasn't elapsed
+  return vibrationLevel;
 }
 
 // Read CO sensor
@@ -128,14 +170,31 @@ float readCO() {
   return rawValue;
 }
 
-// Read elevation from MPU6050 (using Y-axis acceleration)
-float readElevation() {
+// Read inclination from MPU6050 using sensor fusion
+float readInclination() {
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
-  return a.acceleration.y; // Using Y-axis as elevation indicator
+  
+  unsigned long currentTime = millis();
+  float deltaTime = (currentTime - lastSensorReadTime) / 1000.0;
+  lastSensorReadTime = currentTime;
+  
+  if (deltaTime <= 0) deltaTime = 0.01; // Prevent division by zero
+  
+  // Calculate pitch angle from accelerometer (tan^-1(x/z))
+  float accelPitch = atan2(a.acceleration.x, sqrt(a.acceleration.y * a.acceleration.y + a.acceleration.z * a.acceleration.z)) * 180.0 / PI;
+  
+  // Integrate gyro data
+  // Pitch is around Y axis (using gyro Y data)
+  float gyroPitch = currentPitchAngle + g.gyro.y * deltaTime * 180.0 / PI;
+  
+  // Complementary filter - combine accelerometer and gyroscope data
+  currentPitchAngle = complementaryFilterAlpha * gyroPitch + (1 - complementaryFilterAlpha) * accelPitch;
+  
+  return currentPitchAngle;
 }
 
-// Calculate fuel used (simulated based on inputs)
+// Calculate fuel used (simplified for proof of concept)
 float calculateFuelUsed() {
   unsigned long currentTime = millis();
   float timeDelta = (currentTime - lastUpdateTime) / 1000.0; // Convert to seconds
@@ -146,16 +205,23 @@ float calculateFuelUsed() {
   }
   
   // Adjust fuel consumption based on sensor readings
-  float elevationFactor = map(abs(elevation), 0, ELEVATION_HIGH, 100, 150) / 100.0;
+  float inclinationFactor = map(abs(inclination), 0, INCLINATION_HIGH, 100, 150) / 100.0;
   float vibrationFactor = map(vibrationLevel, VIBRATION_LOW, VIBRATION_HIGH, 100, 130) / 100.0;
   float coFactor = map(monoxideLevel, CO_LOW, CO_HIGH, 100, 120) / 100.0;
   
   // Calculate fuel used in this period
-  float fuelIncrement = BASE_FUEL_RATE * timeDelta * elevationFactor * vibrationFactor * coFactor;
+  float fuelIncrement = BASE_FUEL_RATE * timeDelta * inclinationFactor * vibrationFactor * coFactor;
   totalFuelUsed += fuelIncrement;
   
   lastUpdateTime = currentTime;
   return totalFuelUsed;
+}
+
+// Helper function to map values between ranges
+float map(float x, float in_min, float in_max, float out_min, float out_max) {
+  if (x <= in_min) return out_min;
+  if (x >= in_max) return out_max;
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 // Fuzzy membership function for LOW
@@ -197,14 +263,14 @@ float membershipHigh(float value, float lowLimit, float highLimit) {
 // Apply fuzzy logic to determine output priority
 float calculateFuzzyOutput() {
   // Normalize inputs to 0-1 range
-  float elevationNorm = constrain(map(abs(elevation), ELEVATION_LOW, ELEVATION_HIGH, 0, 100) / 100.0, 0, 1);
+  float inclinationNorm = constrain(map(abs(inclination), INCLINATION_LOW, INCLINATION_HIGH, 0, 100) / 100.0, 0, 1);
   float coNorm = constrain(map(monoxideLevel, CO_LOW, CO_HIGH, 0, 100) / 100.0, 0, 1);
   float vibrationNorm = constrain(map(vibrationLevel, VIBRATION_LOW, VIBRATION_HIGH, 0, 100) / 100.0, 0, 1);
   
   // Calculate membership values
-  float elevLow = membershipLow(elevationNorm, 0, 1);
-  float elevMed = membershipMedium(elevationNorm, 0, 1);
-  float elevHigh = membershipHigh(elevationNorm, 0, 1);
+  float inclLow = membershipLow(inclinationNorm, 0, 1);
+  float inclMed = membershipMedium(inclinationNorm, 0, 1);
+  float inclHigh = membershipHigh(inclinationNorm, 0, 1);
   
   float coLow = membershipLow(coNorm, 0, 1);
   float coMed = membershipMedium(coNorm, 0, 1);
@@ -214,15 +280,25 @@ float calculateFuzzyOutput() {
   float vibMed = membershipMedium(vibrationNorm, 0, 1);
   float vibHigh = membershipHigh(vibrationNorm, 0, 1);
   
-  // Fuzzy rules (simplified)
+  // Fuzzy rules (enhanced with more specific scenarios)
   // 1. If any input is HIGH, output is HIGH priority
-  float ruleHigh = max(max(elevHigh, coHigh), vibHigh);
+  float ruleHigh = max(max(inclHigh, coHigh), vibHigh);
   
   // 2. If all inputs are LOW, output is LOW priority
-  float ruleLow = min(min(elevLow, coLow), vibLow);
+  float ruleLow = min(min(inclLow, coLow), vibLow);
   
-  // 3. Otherwise, output is MEDIUM priority
-  float ruleMed = max(max(elevMed, coMed), vibMed);
+  // 3. Special case: Traffic jam on hill (high inclination AND high CO)
+  // Need to maintain power even in traffic when on a hill
+  float ruleHillTraffic = min(inclHigh, coHigh);
+  ruleHigh = max(ruleHigh, ruleHillTraffic);
+  
+  // 4. Special case: Idle in traffic (low vibration AND high CO AND low inclination)
+  // Maximum fuel saving when idling in traffic on flat road
+  float ruleIdleTraffic = min(min(vibLow, coHigh), inclLow);
+  ruleLow = max(ruleLow, ruleIdleTraffic);
+  
+  // 5. Normal driving conditions: medium priority
+  float ruleMed = max(max(inclMed, coMed), vibMed);
   if (ruleHigh < 0.3 && ruleLow < 0.3) {
     ruleMed = max(ruleMed, 0.5);  // Strengthen medium rule if neither high nor low are strong
   }
@@ -252,10 +328,13 @@ void setup() {
   // Initialize sensors
   pinMode(VIBRATION_SENSOR_PIN, INPUT);
   
+  // Attach interrupt for vibration sensor
+  attachInterrupt(digitalPinToInterrupt(VIBRATION_SENSOR_PIN), vibrationISR, RISING);
+  
   // Initialize MPU6050
   Wire.begin();
   if (!initMPU()) {
-    // If MPU initialization fails, try to restart or handle gracefully
+    // If MPU initialization fails, try to restart
     ESP.restart();
   }
   
@@ -291,23 +370,27 @@ void setup() {
   
   // Update database paths
   databasePath = "/UsersData/" + uid;
-  elevationPath = databasePath + "/elevation";
+  inclinationPath = databasePath + "/inclination";  // Changed from elevation
   fuelUsedPath = databasePath + "/fuelUsed";
   monoxidePath = databasePath + "/monoxideLevel";
   vibrationPath = databasePath + "/vibration";
   fuzzyOutputPath = databasePath + "/fuzzyOutput";
   
-  Serial.println("System initialized!");
+  // Initialize timing variables
+  lastSensorReadTime = millis();
+  lastVibrationTime = millis();
+  
+  Serial.println("i-FUSE System initialized!");
 }
 
 void loop() {
   // Read all sensors
-  elevation = readElevation();
+  inclination = readInclination();  // Using sensor fusion for inclination
   monoxideLevel = readCO();
-  vibrationLevel = readVibration();
+  vibrationLevel = readVibration();  // Using interrupt-based approach
   fuelUsed = calculateFuelUsed();
   
-  // Apply fuzzy logic
+  // Apply fuzzy logic with enhanced rules
   fuzzyOutput = calculateFuzzyOutput();
   
   // Set servo position
@@ -315,24 +398,27 @@ void loop() {
   
   // Print to serial for debugging
   Serial.println("=== Sensor Readings ===");
-  Serial.print("Elevation: "); Serial.println(elevation);
+  Serial.print("Inclination: "); Serial.println(inclination);
   Serial.print("CO Level: "); Serial.println(monoxideLevel);
   Serial.print("Vibration: "); Serial.println(vibrationLevel);
   Serial.print("Fuel Used: "); Serial.println(fuelUsed);
   Serial.print("Fuzzy Output: "); Serial.println(fuzzyOutput);
   Serial.println("=====================");
   
+  // Check WiFi status
+  checkWiFiConnection();
+  
   // Send data to Firebase
   if (Firebase.ready() && (millis() - sendDataPrevMillis > timerDelay || sendDataPrevMillis == 0)) {
     sendDataPrevMillis = millis();
     
     // Send readings to database
-    sendFloat(elevationPath, elevation);
+    sendFloat(inclinationPath, inclination);
     sendFloat(monoxidePath, monoxideLevel);
     sendFloat(vibrationPath, vibrationLevel);
     sendFloat(fuelUsedPath, fuelUsed);
     sendFloat(fuzzyOutputPath, fuzzyOutput);
   }
   
-  delay(200); // delay for stability
+  delay(100); // shorter delay for more responsive readings
 }
