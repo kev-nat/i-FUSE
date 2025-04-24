@@ -1,2 +1,1 @@
-### Background💡
-<p align="justify"> Fossil fuel prices for vehicles are rapidly increasing, and the trend continues each year. In big cities like Jakarta, the rising number of private vehicle users contributes to heavy traffic congestion, which leads to even greater fuel consumption. While electric vehicles present a possible alternative, they remain costly and are not yet a widespread solution. </p>
+
